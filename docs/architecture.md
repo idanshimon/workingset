@@ -140,6 +140,102 @@ bg = BriefGenerator(v, budgets)
 bg.write_brief("cust/acme")
 ```
 
+## Schema versioning
+
+workingset stamps version numbers in two places so changes to formats
+can be detected and migrated:
+
+| What | Where | Bumped when |
+|---|---|---|
+| **Index schema version** | `.workingset/index.db`'s `schema_version` table | The SQLite FTS5 schema changes such that existing indexes can't be incrementally updated |
+| **Brief format version** | Each `brief.md`'s frontmatter `version:` field | The brief's structure changes such that downstream consumers (OIL graph builders, agent skills) need to adapt parsing |
+| **JSON output schema version** | Envelope `schema_version` field on every `--json` output | A `--json` payload changes shape (field renamed/removed) |
+
+Current values (constants in `src/workingset/cli.py`):
+
+```python
+CURRENT_INDEX_VERSION = 1
+CURRENT_BRIEF_VERSION = 2
+SCHEMA_VERSIONS = {
+    "init": "1.0", "reindex": "1.0", "stats": "1.0", "query": "1.0",
+    "brief": "1.0", "compact": "1.0", "diff": "1.0", "migrate": "1.0",
+}
+```
+
+### Migration workflow
+
+Users run `ws migrate` after upgrading workingset:
+
+```bash
+ws migrate           # dry-run: report what's outdated
+ws migrate --apply   # repair: rebuild index + regenerate briefs
+```
+
+The migrate command checks:
+1. Does `.workingset/index.db` have a `schema_version` table, and is the
+   stored value ≥ `CURRENT_INDEX_VERSION`?
+2. Does every `brief.md` have `version: N` in frontmatter, and is
+   `N >= CURRENT_BRIEF_VERSION`?
+
+Anything below current is flagged with a `fix_command` (e.g.
+`ws reindex --full`, `ws brief cust/acme --budget 8000 --write`).
+
+### When to bump
+
+| Change | What to bump |
+|---|---|
+| Add a new optional field to a brief section | nothing — readers should tolerate extra fields |
+| Rename a brief section heading | bump `CURRENT_BRIEF_VERSION` |
+| Add a new `--json` field | bump minor (`1.0` → `1.1`); old consumers still work |
+| Remove or rename a `--json` field | bump major (`1.0` → `2.0`); document the migration |
+| Change the FTS5 schema | bump `CURRENT_INDEX_VERSION` and add migration to `ws migrate --apply` |
+
+### Why three separate version constants
+
+The three changes happen on independent timescales:
+
+- Index schema is stable for years (FTS5 BM25 is mature)
+- Brief format evolves with feedback (already bumped 1→2 in v0.2)
+- JSON envelopes evolve as new commands are added or output expands
+
+Tying them together would force unnecessary migrations every time any
+one of them changed.
+
+## Reproducible benchmark
+
+The headline workingset claims (30-60× token reduction, per-model
+hallucination probabilities on the trap question) are validated by a
+behavioral benchmark that ships with the repo at [`bench/`](../bench/).
+
+It is the public, self-contained subset of the 432-trial study from the
+[benchmark article](https://github.com/idanshimon/workingset). Pointed
+at the [example vault](../examples/example-vault/) so anyone can re-run
+without access to private data:
+
+```bash
+cd bench
+python3 harness/run_minimal_bench.py    # ~3 min, ~$0.50
+python3 harness/render_report.py        # produces report.html
+open report.html
+```
+
+The harness measures three questions across two conditions
+(`brief_only` vs `full_source`) per model, parses the Copilot CLI
+billing footer for actual input tokens, and grades each response as
+correct/abstained/hallucinated. The grading uses keyword sets (no LLM
+judge) so it's deterministic and free.
+
+The trap question (Q3: "How many in-house developers does Acme have?")
+is the safety primitive. The brief contains "Priya's 10-20 core
+engineers" in a *different* context (workshop attendance). A model that
+confuses workshop-attendance with developer-headcount will report
+"10-20" as the answer. Frontier models recognize this and abstain;
+small models sometimes don't.
+
+Use this harness as a methodology template, not a value claim for your
+vault. Your data shape will produce different ratios and different trap
+profiles. Add your own questions to the harness for production use.
+
 ## Why no embeddings
 
 Common question: "why BM25/FTS5 instead of vector embeddings?"

@@ -16,6 +16,7 @@ unless you pass ``--json``, which makes it scriptable from any agent harness.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -38,8 +39,70 @@ VAULT_OPTION = click.option(
 JSON_OPTION = click.option("--json", "json_out", is_flag=True, help="Emit JSON.")
 
 
+# ─── JSON schema versioning ─────────────────────────────────────────────────
+#
+# Every --json output is wrapped in an envelope with a schema_version so
+# downstream tools can detect breaking changes. Patch versions are stable;
+# minor bumps may add fields (backward-compat); major bumps may remove or
+# rename fields (breaking).
+#
+# Per-command versions live here. Bump them when you change the SHAPE of
+# the corresponding payload, not when the underlying logic changes.
+SCHEMA_VERSIONS = {
+    "init":    "1.0",   # {vault, root, indexed, branches, tokens, db_kb}
+    "reindex": "1.0",   # {vault, added, updated, removed, indexed}
+    "stats":   "1.0",   # {vault, notes, branches, tokens_est, ...}
+    "query":   "1.0",   # {query, branch, budget, tokens_used, results: [...]}
+    "brief":   "1.0",   # {branch, path, tokens, notes, frontmatter}
+    "compact": "1.0",   # {file, before_tokens, after_tokens, archived_blocks}
+    "diff":    "1.0",   # {branch, tokenizer, before, after, ratio, percent_saved}
+    "migrate": "1.0",   # {from_version, to_version, status, actions: [...]}
+}
+
+
+def _emit_json(command: str, payload: dict) -> None:
+    """Wrap a payload with a schema-version envelope and print it.
+
+    Envelope shape:
+        {"schema_version": "1.0", "command": "init", "data": {...}}
+
+    Downstream tools should read `schema_version` first and adapt parsing.
+    The `data` field carries the per-command payload — see SCHEMA_VERSIONS
+    above for the per-command shape contract.
+    """
+    envelope = {
+        "schema_version": SCHEMA_VERSIONS.get(command, "0.0"),
+        "command": command,
+        "data": payload,
+    }
+    click.echo(json.dumps(envelope, indent=2))
+
+
 def _resolve_vault(path: Optional[Path]) -> Vault:
     return Vault(path or Path.cwd())
+
+
+def _stamp_index_schema_version(ix: "VaultIndex") -> None:
+    """Write the current index schema version into the index's
+    schema_version table. Called by `init` and `reindex --full` so
+    `ws migrate` can detect outdated indexes later."""
+    conn = ix._conn
+    if conn is None:
+        return  # closed index — nothing to stamp
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (CURRENT_INDEX_VERSION,))
+    conn.commit()
+
+
+# Brief format version history — bump when the brief frontmatter `version:`
+# field needs to change. Brief readers should check this and re-generate if
+# their expected minimum is higher.
+CURRENT_BRIEF_VERSION = 2
+
+# Index schema version — bump when the SQLite FTS5 schema changes such that
+# existing indexes must be rebuilt. Stored in the schema_version table.
+CURRENT_INDEX_VERSION = 1
 
 
 @click.group(help="workingset — vault-aware context compactor for LLM agents.")
@@ -58,6 +121,8 @@ def init(vault: Optional[Path], json_out: bool) -> None:
     with VaultIndex(v) as ix:
         added, updated, removed = ix.reindex(full=True)
         stats = ix.stats()
+        # Stamp schema_version table for future ws migrate checks
+        _stamp_index_schema_version(ix)
     payload = {
         "vault": v.name,
         "root": str(v.root),
@@ -67,7 +132,7 @@ def init(vault: Optional[Path], json_out: bool) -> None:
         "db_kb": stats.db_size_bytes // 1024,
     }
     if json_out:
-        click.echo(json.dumps(payload, indent=2))
+        _emit_json("init", payload)
         return
     click.echo(f"Vault:      {payload['vault']}  ({payload['root']})")
     click.echo(f"Indexed:    {payload['indexed']} notes "
@@ -87,12 +152,14 @@ def reindex(vault: Optional[Path], full: bool, json_out: bool) -> None:
     with VaultIndex(v) as ix:
         added, updated, removed = ix.reindex(full=full)
         stats = ix.stats()
+        if full:
+            _stamp_index_schema_version(ix)
     payload = {
         "added": added, "updated": updated, "removed": removed,
         "total": stats.note_count, "tokens": stats.total_tokens,
     }
     if json_out:
-        click.echo(json.dumps(payload, indent=2))
+        _emit_json("reindex", payload)
         return
     click.echo(f"+{added} added · ~{updated} updated · -{removed} removed "
                f"→ {stats.note_count} notes / {stats.total_tokens:,} tok")
@@ -117,7 +184,7 @@ def stats(vault: Optional[Path], json_out: bool) -> None:
         "last_indexed_at": s.last_indexed_at,
     }
     if json_out:
-        click.echo(json.dumps(payload, indent=2))
+        _emit_json("stats", payload)
         return
     if s.note_count == 0:
         click.echo("Index is empty. Run `ws init`.")
@@ -177,7 +244,7 @@ def query(
                     for r in results
                 ],
             }
-            click.echo(json.dumps(payload, indent=2))
+            _emit_json("query", payload)
             return
 
         if not results:
@@ -253,7 +320,7 @@ def brief(
             "decisions": b.stats.decisions_kept,
             "written_to": str(out) if (write and out) else None,
         }
-        click.echo(json.dumps(payload, indent=2))
+        _emit_json("brief", payload)
         return
 
     if write and out is not None:
@@ -310,7 +377,7 @@ def compact(
         "dry_run": dry_run,
     }
     if json_out:
-        click.echo(json.dumps(payload, indent=2))
+        _emit_json("compact", payload)
         return
 
     if result.skipped_reason:
@@ -473,7 +540,7 @@ def diff(
         payload["brief_headings"] = brief_stats.headings_kept
 
     if json_out:
-        click.echo(json.dumps(payload, indent=2))
+        _emit_json("diff", payload)
         return
 
     tok_label = "chars/4 estimator" if tokenizer == "chars4" else f"tiktoken {encoding}"
@@ -487,6 +554,179 @@ def diff(
         click.echo(f"\nBrief contents: {brief_stats.action_items_kept} actions · "
                    f"{brief_stats.decisions_kept} decisions · "
                    f"{brief_stats.headings_kept} headings")
+
+
+# -- migrate --------------------------------------------------------------
+
+# (CURRENT_BRIEF_VERSION and CURRENT_INDEX_VERSION are declared near the
+# top of this file alongside _stamp_index_schema_version.)
+
+
+@main.command(help="Inspect or upgrade index + brief formats to current versions.")
+@VAULT_OPTION
+@click.option("--apply", "apply_changes", is_flag=True,
+              help="Apply migration actions (default: dry-run / report only).")
+@JSON_OPTION
+def migrate(vault: Optional[Path], apply_changes: bool, json_out: bool) -> None:
+    """Detect format-version mismatches and (optionally) repair them.
+
+    Two things get checked:
+      1. Index schema version — if behind, the index needs `init --full`
+      2. Brief format version — if behind, each affected brief needs
+         regenerating via `brief <branch> --write`
+
+    Default is dry-run. Pass --apply to actually run the upgrades.
+    """
+    v = _resolve_vault(vault)
+    actions = []
+
+    # Check index schema version
+    index_path = v.root / ".workingset" / "index.db"
+    if not index_path.exists():
+        actions.append({
+            "type": "missing_index",
+            "severity": "warning",
+            "detail": "No .workingset/index.db found. Run `ws init` first.",
+        })
+        index_version = None
+    else:
+        import sqlite3
+        try:
+            conn = sqlite3.connect(index_path)
+            cur = conn.cursor()
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+            )
+            row = cur.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+            index_version = row[0] if row else 0
+            if index_version < CURRENT_INDEX_VERSION:
+                actions.append({
+                    "type": "index_schema_outdated",
+                    "severity": "error",
+                    "detail": f"Index at schema v{index_version}, current is v{CURRENT_INDEX_VERSION}. Full rebuild required.",
+                    "fix_command": "ws reindex --full",
+                })
+            conn.close()
+        except sqlite3.DatabaseError as e:
+            actions.append({
+                "type": "index_corrupt",
+                "severity": "error",
+                "detail": f"Index unreadable: {e}",
+                "fix_command": "ws init",
+            })
+            index_version = None
+
+    # Check brief format versions across all branches
+    brief_summary = {"total": 0, "current": 0, "outdated": 0, "unreadable": 0}
+    outdated_briefs = []
+    for brief_path in v.root.rglob("brief.md"):
+        # Skip non-vault paths (e.g. .venv if someone put workingset INSIDE a vault)
+        if any(p.startswith(".") for p in brief_path.relative_to(v.root).parts[:-1]):
+            continue
+        brief_summary["total"] += 1
+        try:
+            text = brief_path.read_text()
+        except Exception:
+            brief_summary["unreadable"] += 1
+            continue
+        if not text.startswith("---"):
+            brief_summary["unreadable"] += 1
+            continue
+        # Parse frontmatter version
+        m = re.search(r"^version:\s*(\d+)\s*$", text, re.MULTILINE)
+        if not m:
+            brief_summary["unreadable"] += 1
+            continue
+        ver = int(m.group(1))
+        if ver < CURRENT_BRIEF_VERSION:
+            brief_summary["outdated"] += 1
+            rel = brief_path.relative_to(v.root)
+            branch_parts = rel.parts[:-1]
+            branch = "/".join(branch_parts) if branch_parts else "."
+            outdated_briefs.append({
+                "path": str(rel),
+                "branch": branch,
+                "version": ver,
+                "fix_command": f"ws brief {branch} --budget 8000 --write",
+            })
+        else:
+            brief_summary["current"] += 1
+
+    if outdated_briefs:
+        actions.append({
+            "type": "briefs_outdated",
+            "severity": "warning",
+            "detail": f"{brief_summary['outdated']} brief(s) below current v{CURRENT_BRIEF_VERSION}",
+            "outdated": outdated_briefs,
+        })
+
+    # Apply phase
+    applied: list[dict] = []
+    if apply_changes and actions:
+        for act in actions:
+            if act["type"] == "index_schema_outdated":
+                with VaultIndex(v) as ix:
+                    ix.reindex(full=True)
+                applied.append({"action": "rebuilt_index", "ok": True})
+            elif act["type"] == "briefs_outdated":
+                with VaultIndex(v) as ix:
+                    for b in outdated_briefs:
+                        try:
+                            gen = BriefGenerator(v, ix, budget_tokens=8000)
+                            brief_obj = gen.for_branch(b["branch"])
+                            brief_obj.write(v.root / b["path"])
+                            applied.append({"action": "regenerated_brief", "path": b["path"], "ok": True})
+                        except Exception as e:
+                            applied.append({"action": "regenerated_brief", "path": b["path"], "ok": False, "error": str(e)})
+
+    payload = {
+        "vault": v.name,
+        "tool_version": __version__,
+        "index_version": index_version,
+        "current_index_version": CURRENT_INDEX_VERSION,
+        "current_brief_version": CURRENT_BRIEF_VERSION,
+        "briefs": brief_summary,
+        "actions_needed": actions,
+        "applied": applied if apply_changes else [],
+        "dry_run": not apply_changes,
+    }
+
+    if json_out:
+        _emit_json("migrate", payload)
+        return
+
+    # Human-readable output
+    click.echo(f"Vault:           {payload['vault']}")
+    click.echo(f"workingset:      v{__version__}")
+    click.echo(f"Index schema:    {'v' + str(index_version) if index_version is not None else 'missing'} "
+               f"(current: v{CURRENT_INDEX_VERSION})")
+    click.echo(f"Briefs:          {brief_summary['total']} total, "
+               f"{brief_summary['current']} current, "
+               f"{brief_summary['outdated']} outdated, "
+               f"{brief_summary['unreadable']} unreadable")
+
+    if not actions:
+        click.echo("\n✓ Everything is at current versions. Nothing to migrate.")
+        return
+
+    click.echo(f"\n{'Actions needed:' if not apply_changes else 'Applied:'}")
+    for act in actions:
+        sev = act["severity"].upper()
+        click.echo(f"  [{sev}] {act['type']}: {act['detail']}")
+        if act.get("fix_command"):
+            click.echo(f"    fix: {act['fix_command']}")
+        if act["type"] == "briefs_outdated":
+            for b in act["outdated"][:5]:
+                click.echo(f"    - {b['path']}  (v{b['version']})")
+            if len(act["outdated"]) > 5:
+                click.echo(f"    ... and {len(act['outdated']) - 5} more")
+
+    if not apply_changes:
+        click.echo("\nThis was a dry run. Re-run with --apply to execute the fixes.")
+    else:
+        for a in applied:
+            if not a.get("ok", True):
+                click.echo(f"  [FAILED] {a}")
 
 
 if __name__ == "__main__":

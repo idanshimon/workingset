@@ -112,23 +112,32 @@ def test_brief_does_not_ingest_itself_on_reindex(vault):
 
 
 def test_json_output_is_valid(vault):
-    """Every CLI command with --json should emit valid JSON to stdout."""
+    """Every CLI command with --json should emit valid JSON wrapped in a
+    schema-version envelope.
+
+    Envelope shape (since v0.4):
+        {"schema_version": "X.Y", "command": "<name>", "data": {...}}
+    """
     ws("init", cwd=vault)
     # query --json
     out, err, rc = ws("query", "stakeholder", "--branch", "cust/acme", "--json", cwd=vault)
     assert rc == 0
-    data = json.loads(out)
+    envelope = json.loads(out)
+    assert "schema_version" in envelope, "json output must have schema_version envelope"
+    assert "command" in envelope and envelope["command"] == "query"
+    data = envelope["data"]
     assert isinstance(data, dict)
     assert "results" in data or "branches" in data or "query" in data, \
-        f"query --json should produce structured results, got: {data}"
+        f"query data should produce structured results, got: {data}"
 
     # stats --json
     out, err, rc = ws("stats", "--json", cwd=vault)
     assert rc == 0
-    stats = json.loads(out)
-    assert isinstance(stats, dict)
+    envelope = json.loads(out)
+    assert envelope["command"] == "stats"
+    stats = envelope["data"]
     assert "notes" in stats or "branches" in stats, \
-        f"stats --json should produce structured info, got: {stats}"
+        f"stats data should produce structured info, got: {stats}"
 
 
 def test_brief_respects_budget(vault):

@@ -220,6 +220,82 @@ $ ws diff cust/acme --tokenizer anthropic
 # uses anthropic.count_tokens (requires ANTHROPIC_API_KEY)
 ```
 
+## `ws migrate`
+
+Inspect or upgrade index + brief formats to current versions. Default is
+a read-only dry-run; pass `--apply` to actually run the upgrades.
+
+```
+ws migrate [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--vault PATH` | `.` | Vault root |
+| `--apply` | off | Actually run migrations (default: dry-run / report only) |
+| `--json` | off | Machine-readable output |
+
+What it checks:
+
+1. **Index schema version** — stored in `.workingset/index.db`'s
+   `schema_version` table. If below `CURRENT_INDEX_VERSION` (currently 1),
+   the index needs `ws reindex --full`.
+2. **Brief format version** — every `brief.md` declares `version: N` in
+   its frontmatter. If below `CURRENT_BRIEF_VERSION` (currently 2), the
+   brief needs regenerating with `ws brief <branch> --write`.
+
+Human-readable output:
+
+```bash
+$ ws migrate
+Vault:           myvault
+workingset:      v0.4.0
+Index schema:    v1 (current: v1)
+Briefs:          12 total, 11 current, 1 outdated, 0 unreadable
+
+Actions needed:
+  [WARNING] briefs_outdated: 1 brief(s) below current v2
+    - cust/legacy/brief.md  (v1)
+
+This was a dry run. Re-run with --apply to execute the fixes.
+```
+
+`--apply` mode:
+
+```bash
+$ ws migrate --apply
+# ... same report as above, then ...
+Applied:
+  ✓ regenerated_brief: cust/legacy/brief.md
+```
+
+`--json` payload (envelope shape per [Working with `--json`](#working-with---json)):
+
+```json
+{
+  "schema_version": "1.0",
+  "command": "migrate",
+  "data": {
+    "vault": "myvault",
+    "tool_version": "0.4.0",
+    "index_version": 1,
+    "current_index_version": 1,
+    "current_brief_version": 2,
+    "briefs": {"total": 12, "current": 11, "outdated": 1, "unreadable": 0},
+    "actions_needed": [
+      {"type": "briefs_outdated", "severity": "warning",
+       "outdated": [{"path": "cust/legacy/brief.md", "branch": "cust/legacy",
+                     "version": 1, "fix_command": "ws brief cust/legacy --budget 8000 --write"}]}
+    ],
+    "applied": [],
+    "dry_run": true
+  }
+}
+```
+
+Run this after upgrading workingset to a new minor version. The
+[CHANGELOG](../CHANGELOG.md) will note when version constants bump.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -231,19 +307,55 @@ $ ws diff cust/acme --tokenizer anthropic
 
 ## Working with `--json`
 
-Every command supports `--json` for scripting. The schemas are stable
-across patch versions. Typical pipeline:
+Every command supports `--json` for scripting. Outputs are wrapped in a
+**schema-version envelope** so downstream tools can detect breaking
+changes:
+
+```json
+{
+  "schema_version": "1.0",
+  "command": "<command-name>",
+  "data": { ... per-command payload ... }
+}
+```
+
+**Versioning contract:**
+- **Patch versions** (`1.0` → `1.0.1`) are stable
+- **Minor bumps** (`1.0` → `1.1`) may add fields (backward-compat)
+- **Major bumps** (`1.0` → `2.0`) may remove or rename fields (breaking)
+
+Consumers should read `schema_version` first and adapt parsing. Always
+read the `data` field, never assume top-level fields beyond the
+envelope.
+
+Per-command current versions:
+
+| Command | schema_version | Payload notes |
+|---|---|---|
+| `init` | `1.0` | `{vault, root, indexed, branches, tokens, db_kb}` |
+| `reindex` | `1.0` | `{added, updated, removed, total, tokens, db_kb}` |
+| `stats` | `1.0` | `{vault, root, notes, branches, tokens, db_kb}` |
+| `query` | `1.0` | `{query, branch, budget, tokens_used, results: [...]}` |
+| `brief` | `1.0` | `{branch, path, tokens, notes, frontmatter}` |
+| `compact` | `1.0` | `{file, before_tokens, after_tokens, archived_blocks}` |
+| `diff` | `1.0` | `{branch, tokenizer, before, after, ratio, percent_saved}` |
+| `migrate` | `1.0` | `{vault, index_version, current_index_version, briefs, actions_needed, applied}` |
+
+Typical pipeline:
 
 ```bash
 # Pre-compute briefs nightly
-for branch in $(ws stats --json | jq -r '.branches_list[]'); do
+for branch in $(ws stats --json | jq -r '.data.branches_list[]'); do
   ws brief "$branch" --budget 8000 --write
 done
 
 # At query time
 ws query "$user_query" --branch "$active_branch" --json | \
-  jq -r '.results[].snippet' | \
+  jq -r '.data.results[].snippet' | \
   agent-prompt --context-from-stdin
+
+# Detect version drift in CI
+ws migrate --json | jq -e '.data.actions_needed == []' || exit 1
 ```
 
 ## Library API

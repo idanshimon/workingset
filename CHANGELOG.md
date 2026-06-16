@@ -14,13 +14,31 @@ This project follows [Semantic Versioning](https://semver.org/).
   - `cursor-rules.md` — Cursor / Windsurf rules append-snippet
   - `cron-refresh.sh` — cron / launchd refresh script template
 - README now links to AGENTS.md as the agent-installer entrypoint
+- **JSON schema envelopes on every `--json` output** — every command now wraps its payload as `{"schema_version": "1.0", "command": "<name>", "data": {...}}` so downstream tools can detect breaking changes. Patch versions are stable; minor bumps may add fields (backward-compat); major bumps may rename or remove fields (breaking). Per-command schema version registry lives in `src/workingset/cli.py`'s `SCHEMA_VERSIONS` constant.
+- **`ws migrate` command** — inspect or upgrade index + brief formats to current versions. Reports outdated index schemas and outdated brief versions in both human-readable and `--json` modes. Default is dry-run; pass `--apply` to actually execute the fixes. Each issue carries a `fix_command` so downstream automation knows exactly what to run.
+- **`CURRENT_INDEX_VERSION = 1`** stamped into `.workingset/index.db`'s `schema_version` table on every `ws init` and `ws reindex --full`. Pre-v0.4 indexes that lack the stamp are detected as v0 and the user is prompted to rebuild.
+- **`bench/`** folder with public reproducible behavioral harness:
+  - `bench/README.md` explains what the bench measures
+  - `bench/harness/run_minimal_bench.py` — runs trials against the example vault using Copilot CLI, parses billing footers, grades responses
+  - `bench/harness/render_report.py` — produces a dark-themed self-contained HTML report
+  - Cost ~$0.50, time ~3 min for the default 2-model run; pass `--models all --runs 3` for the full 432-trial reproduction
+- **6 new mock-provider integration tests** (`tests/test_mock_provider.py`):
+  - Asserts `ws diff` ratio is within 30% of a provider-accurate tokenizer (catches drift in the public token-savings claim)
+  - Asserts brief frontmatter always includes `version: 2`
+  - Asserts `schema_version=1` stamped on every fresh `ws init`
+  - Asserts `ws migrate` reports clean state after fresh init+brief
+  - Asserts `ws migrate` detects unstamped pre-v0.4 indexes correctly
+  - Asserts `--json` envelope shape is stable across all commands
+- `docs/cli-reference.md` updated with the `ws migrate` section + the schema-envelope spec
+- `docs/architecture.md` updated with a "Schema versioning" section (when to bump each constant, migration workflow) + a "Reproducible benchmark" section
 
 ### Planned (TBD)
 
 - **End-to-end verification of the AGENTS.md install flow** in a fresh Hermes / Claude Code / Codex session — drive the 8-step workflow autonomously against the example vault, capture any gaps in the deterministic-step wording, and patch AGENTS.md based on what the agent actually trips on.
 - README screenshots — picture of a real brief + the multi-run dashboard, embedded near the top so README skimmers see the deliverable.
-- Bench harness bundled with the tool — currently the 432-trial benchmark lives in a separate location; shipping it under `bench/` with the anonymized fixture would make the safety claim independently reproducible by anyone who clones the repo.
 - Type hints + `mypy --strict` in CI — declarative types exist informally; making them enforced would catch a class of bugs the regex pitfall (Sonnet token parsing) belonged to.
+- Stress test on a 10K-note synthetic vault — generate fake markdown at scale, measure init/reindex/brief/query times, document the actual numbers so the "scales to ~1M notes" claim has data behind it.
+- Section-extractor plugin protocol — let users register custom extractors for non-customer-notes vault shapes (engineering wikis, research notes) without forking the tool.
 
 ## [0.3.0] — 2026-06-16
 
