@@ -150,9 +150,11 @@ All commands accept `--vault PATH` (defaults to current directory) and `--json` 
 
 ## Documentation
 
+- **[`AGENTS.md`](AGENTS.md)** — agent-facing install guide. If an AI assistant (Hermes, Claude Code, Codex CLI, Cursor) is installing this on the user's machine, **start here**.
 - **[`docs/architecture.md`](docs/architecture.md)** — the 5-layer ContextForge-derived mental model, section budgets, library API
 - **[`docs/cli-reference.md`](docs/cli-reference.md)** — every CLI command + every flag, with examples
-- **[`docs/adoption-guide.md`](docs/adoption-guide.md)** — step-by-step recipe for wiring workingset into a new vault
+- **[`docs/adoption-guide.md`](docs/adoption-guide.md)** — step-by-step recipe for humans wiring workingset into a new vault
+- **[`templates/`](templates/)** — drop-in templates for Hermes / Claude Code / Codex / Cursor / cron
 - **[`examples/example-vault/`](examples/example-vault)** — canonical fixture vault you can `ws init` against to see a real brief
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — dev setup, PR conventions
 - **[`CHANGELOG.md`](CHANGELOG.md)** — version history

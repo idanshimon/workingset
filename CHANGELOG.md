@@ -5,14 +5,26 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (post v0.3.0)
+- **`AGENTS.md`** at repo root — agent-facing install guide. Deterministic 8-step workflow with verification commands at each step, so an AI assistant (Hermes / Claude Code / Codex / Cursor) can install workingset on a user's vault unsupervised.
+- **`templates/`** — drop-in install templates referenced by AGENTS.md:
+  - `hermes-skill.md` — Hermes Agent SKILL.md
+  - `claude-code-snippet.md` — Claude Code CLAUDE.md append-snippet
+  - `codex-snippet.md` — Codex CLI AGENTS.md append-snippet
+  - `cursor-rules.md` — Cursor / Windsurf rules append-snippet
+  - `cron-refresh.sh` — cron / launchd refresh script template
+- README now links to AGENTS.md as the agent-installer entrypoint
+
+## [0.3.0] — 2026-06-16
+
 ### Added
 - `LICENSE` file (MIT) at repo root
 - `CONTRIBUTING.md` with PR conventions and dev workflow
 - `CHANGELOG.md` (this file)
 - `.github/workflows/test.yml` — CI on pushes/PRs: pytest matrix on Python 3.11 / 3.12 / 3.13, coverage upload
 - `docs/architecture.md` — 5-layer mapping (ContextForge → workingset translation)
-- `docs/cli-reference.md` — exhaustive CLI reference, generated from `ws --help` + hand-edited
-- `docs/adoption-guide.md` — step-by-step recipe for wiring workingset into a new vault
+- `docs/cli-reference.md` — exhaustive CLI reference
+- `docs/adoption-guide.md` — step-by-step recipe for humans wiring workingset into a new vault
 - `ws --version` flag
 - `examples/example-vault/` — canonical fixture vault anyone can point `ws` at to see a real brief
 - Integration tests (`tests/test_integration.py`) covering the full `init → reindex → query → brief → diff` pipeline end-to-end
