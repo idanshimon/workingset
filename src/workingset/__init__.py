@@ -1,12 +1,12 @@
 """workingset — vault-aware context compactor for LLM agents.
 
 Treat your markdown vault like a working set, not a buffer. Point it at any
-folder of markdown (customer-hub, agent-os, plain Obsidian) and get:
+folder of markdown (customer notes, agent-os, plain Obsidian) and get:
 
 - BM25/FTS5 index over the whole vault (one SQLite file, milliseconds to query)
 - Per-folder ~500-token "brief.md" residual that any agent can load instead
   of reading 5 files / 220KB
-- Working-set queries: ``ws query "kapil 30x"`` returns ranked branches under a
+- Working-set queries: ``ws query "renewal Q3"`` returns ranked branches under a
   token budget, ready to paste into a prompt
 - Status-archive sweeper: stale "🔥 STATUS" blocks roll out to a separate
   archive file per ContextForge's 3000-tok compaction rule
@@ -19,7 +19,7 @@ Quickstart::
     pip install workingset
     cd ~/path/to/vault
     ws init
-    ws query "kapil 30x token reduction"
+    ws query "renewal q3 budget"
 
 See ``ws --help`` for the full command surface.
 """

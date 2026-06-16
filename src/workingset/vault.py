@@ -1,12 +1,12 @@
 """Vault — represents a folder of markdown notes with frontmatter.
 
 A vault is just a directory. workingset doesn't care if it's an Obsidian vault,
-a customer-hub repo, or an agent-os tree — anything with .md files works.
+a customer-notes repo, or an agent-os tree — anything with .md files works.
 
 The Vault class handles:
 - discovery (walking the tree, respecting .gitignore-style ignores)
 - frontmatter parsing (YAML between --- markers at the top of a file)
-- "branch" identification (a top-level folder = a branch, e.g. cust/hca/)
+- "branch" identification (a top-level folder = a branch, e.g. cust/acme/)
 """
 from __future__ import annotations
 
@@ -56,8 +56,8 @@ class Note:
     """Path relative to vault root, forward-slash-normalized."""
 
     branch: str
-    """Top-level folder under vault root (e.g. ``cust/hca`` for
-    ``cust/hca/context/index.md``). Empty string for files at the root.
+    """Top-level folder under vault root (e.g. ``cust/acme`` for
+    ``cust/acme/context/index.md``). Empty string for files at the root.
     Used for branch-cache routing."""
 
     size_bytes: int
@@ -210,7 +210,7 @@ def _branch_for(relpath: str) -> str:
     the first segment. Files at root return "".
 
     Examples:
-        cust/hca/context/index.md           -> "cust/hca"
+        cust/acme/context/index.md           -> "cust/acme"
         wiki/msft/meeting-notes/foo.md      -> "wiki"
         00-meta/log/2026-06-15.md           -> "00-meta"
         README.md                           -> ""

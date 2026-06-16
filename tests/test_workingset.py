@@ -15,7 +15,7 @@ from workingset.vault import Vault, _branch_for
 
 
 def _seed_vault(root: Path) -> None:
-    """Create a tiny vault that mimics customer-hub shape."""
+    """Create a tiny vault that mimics a customer-notes vault shape."""
     (root / "cust" / "acme").mkdir(parents=True)
     (root / "cust" / "acme" / "index.md").write_text(
         "---\ncustomer: acme\ntpid: 12345\n---\n"
@@ -205,8 +205,8 @@ def test_decisions_no_double_bullet(tmp_path: Path):
     (tmp_path / "cust" / "x").mkdir(parents=True)
     (tmp_path / "cust" / "x" / "notes.md").write_text(
         "# X\n\n## Plan\n"
-        "- **Owner (MSFT):** Don Dinulos / ISD + Lim Ko.\n"
-        "- **Action:** Paul leading enablement session.\n"
+        "- **Owner (Vendor):** Alice Chen / Platform + Bob Patel.\n"
+        "- **Action:** Carol leading enablement session.\n"
         "- **Decision:** Day 2 demos removed from agenda.\n",
         encoding="utf-8",
     )
@@ -220,8 +220,8 @@ def test_decisions_no_double_bullet(tmp_path: Path):
         "Double-bullet leaked into brief output:\n" + b.content
     )
     # All three decision lines should still be there.
-    assert "Don Dinulos" in b.content
-    assert "Paul leading" in b.content
+    assert "Alice Chen" in b.content
+    assert "Carol leading" in b.content
     assert "Day 2 demos" in b.content
 
 
@@ -321,19 +321,19 @@ def test_section_budget_allocation():
 def test_status_block_extracted_into_brief(tmp_path: Path):
     """The most recent ## 🔥 STATUS block should appear verbatim in the brief.
 
-    This is the highest-signal content for customer-hub-style notes and was
+    This is the highest-signal content for status-block-heavy vaults and was
     missing from the brief in v1. Regression test.
     """
     from workingset.brief import _extract_latest_status
 
-    (tmp_path / "cust" / "hca").mkdir(parents=True)
-    (tmp_path / "cust" / "hca" / "index.md").write_text(
-        "# HCA\n\n"
-        "## 🔥 STATUS (June 15, 2026): KAPIL MEET DONE | SCOPE LOCKED\n\n"
-        "**Just landed:** Kapil corrected scope, two-act framing locked, "
+    (tmp_path / "cust" / "acme").mkdir(parents=True)
+    (tmp_path / "cust" / "acme" / "index.md").write_text(
+        "# Acme\n\n"
+        "## 🔥 STATUS (June 15, 2026): KICKOFF DONE | SCOPE LOCKED\n\n"
+        "**Just landed:** scope corrected, two-act framing locked, "
         "8 attendees confirmed.\n"
         "- Workshop invite gap caught\n"
-        "- BizTalk sleeper post-workshop\n\n"
+        "- Legacy-system sleeper post-workshop\n\n"
         "## 🔥 STATUS (May 22, 2026): EARLIER\n\n"
         "Old status content.\n\n"
         "## Other section\n\nUnrelated.\n",
@@ -346,22 +346,22 @@ def test_status_block_extracted_into_brief(tmp_path: Path):
     block, src = _extract_latest_status(notes)
     assert block is not None
     assert "June 15, 2026" in block
-    assert "KAPIL MEET DONE" in block
+    assert "KICKOFF DONE" in block
     assert "Workshop invite gap caught" in block
     # It stops at the next status header, doesn't bleed into May 22.
     assert "Old status content" not in block
     assert "## Other section" not in block
-    assert src == "cust/hca/index.md"
+    assert src == "cust/acme/index.md"
 
     with VaultIndex(v) as ix:
         ix.reindex(full=True)
-        b = BriefGenerator(v, ix, budget_tokens=4000).for_branch("cust/hca")
+        b = BriefGenerator(v, ix, budget_tokens=4000).for_branch("cust/acme")
 
     # Status block must surface in the brief content + stats.
     assert "## Latest status (verbatim)" in b.content
-    assert "KAPIL MEET DONE" in b.content
+    assert "KICKOFF DONE" in b.content
     assert b.stats.status_block_included
-    assert b.stats.status_source == "cust/hca/index.md"
+    assert b.stats.status_source == "cust/acme/index.md"
 
 
 def test_status_extractor_returns_none_when_absent():
@@ -436,10 +436,10 @@ def test_status_trim_keeps_content_under_tight_budget():
     from workingset.brief import _trim_block_to_budget
 
     block = (
-        "## 🔥 STATUS (June 15): KAPIL MEET DONE | SCOPE LOCKED\n\n"
-        "**Just landed (Kapil + HCA team):**\n"
+        "## 🔥 STATUS (June 15): KICKOFF DONE | SCOPE LOCKED\n\n"
+        "**Just landed (vendor + customer team):**\n"
         + ("- Workshop invite gap caught\n" * 30)
-        + "- BizTalk sleeper post-workshop\n\n"
+        + "- Legacy-system sleeper post-workshop\n\n"
         "Old paragraph 1.\n\n"
         "Old paragraph 2.\n"
     )
@@ -447,7 +447,7 @@ def test_status_trim_keeps_content_under_tight_budget():
     # Budget too small to fit even the first paragraph in full.
     out = _trim_block_to_budget(block, budget=80)
     # Header is preserved.
-    assert "KAPIL MEET DONE" in out
+    assert "KICKOFF DONE" in out
     # We never return JUST the header — there's some content + a marker.
     assert "_(" in out  # one of the trimmed markers
     # We didn't return the entire block.

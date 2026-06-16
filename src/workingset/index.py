@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_notes_mtime  ON notes(mtime_ns);
 
 -- FTS5 virtual table. ``content=''`` makes it a contentless table —
 -- we manage the storage in ``notes`` and feed FTS5 explicitly.
--- prefix='2 3 4' lets prefix queries (kapil*) hit the index.
+-- prefix='2 3 4' lets prefix queries (renewal*) hit the index.
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
     relpath UNINDEXED,
     branch  UNINDEXED,
@@ -227,7 +227,7 @@ class VaultIndex:
             query: User query. Passed to FTS5 with light sanitization;
                 multi-word queries match documents containing all terms.
             top_k: Maximum results.
-            branch: If given, restrict to one branch (e.g. ``"cust/hca"``).
+            branch: If given, restrict to one branch (e.g. ``"cust/acme"``).
             min_score: Drop results whose normalized score is below this.
         """
         self.open()

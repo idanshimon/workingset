@@ -91,7 +91,7 @@ DEFAULT_BUDGET_TOKENS = 8000
 class SectionBudget:
     """Per-section token allocation. Shares of the total budget.
 
-    Defaults sized for 8K-token briefs in customer-hub-shaped vaults.
+    Defaults sized for 8K-token briefs in status-block-heavy vaults.
     Adjust if your corpus has a different shape (e.g. status blocks
     are not the highest-signal content for you).
     """
@@ -251,7 +251,7 @@ class BriefGenerator:
         self.summarize = summarize
 
     def for_branch(self, branch: str) -> Brief:
-        """Build a brief for a single branch (e.g. ``cust/hca``)."""
+        """Build a brief for a single branch (e.g. ``cust/acme``)."""
         notes = self._notes_for_branch(branch)
         if not notes:
             empty = _empty_brief(self.vault.name, branch)

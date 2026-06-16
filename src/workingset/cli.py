@@ -361,7 +361,7 @@ def diff(
     """Compare the cost of dumping every file in a branch vs reading the brief.
 
     The "before" number is what an agent pays today when it does
-    ``cat cust/hca/context/*.md`` (or the equivalent in your skill).
+    ``cat cust/acme/context/*.md`` (or the equivalent in your skill).
     By default the "after" number is the actual ``brief.md`` file on
     disk — i.e. what an agent will *actually* load. Use ``--regenerate``
     to instead build a fresh brief at ``--budget`` and measure that.
