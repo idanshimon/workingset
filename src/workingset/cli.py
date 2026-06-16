@@ -331,34 +331,73 @@ def compact(
 @click.argument("branch")
 @VAULT_OPTION
 @click.option("--budget", "-B", type=int, default=8000,
-              help="Brief budget to compare against (default 8000).")
+              help="Brief budget if regenerating (default 8000). "
+                   "Ignored when --on-disk reads the existing brief.md.")
 @click.option("--include", multiple=True,
               help="Glob(s) of files counted as the 'before' load. "
                    "Default: every .md file in the branch. Repeatable.")
+@click.option("--regenerate/--on-disk", default=False,
+              help="--on-disk (default): measure the brief.md file as it "
+                   "exists on disk. --regenerate: build a fresh brief at "
+                   "--budget and measure that instead.")
+@click.option("--tokenizer", type=click.Choice(["chars4", "tiktoken"]),
+              default="chars4",
+              help="chars4 (default, dependency-free) or tiktoken "
+                   "(real tokenizer, requires `pip install tiktoken`).")
+@click.option("--encoding", default="o200k_base",
+              help="tiktoken encoding (only with --tokenizer tiktoken). "
+                   "o200k_base = GPT-4o/5, cl100k_base = older OpenAI/Claude-ish.")
 @JSON_OPTION
 def diff(
     branch: str,
     vault: Optional[Path],
     budget: int,
     include: tuple[str, ...],
+    regenerate: bool,
+    tokenizer: str,
+    encoding: str,
     json_out: bool,
 ) -> None:
     """Compare the cost of dumping every file in a branch vs reading the brief.
 
     The "before" number is what an agent pays today when it does
     ``cat cust/hca/context/*.md`` (or the equivalent in your skill).
-    The "after" number is the cost of the brief at ``--budget`` size.
+    By default the "after" number is the actual ``brief.md`` file on
+    disk — i.e. what an agent will *actually* load. Use ``--regenerate``
+    to instead build a fresh brief at ``--budget`` and measure that.
 
     Useful for proving the value of running ``ws brief`` on a cron, or for
     wiring brief.md into a customer-load skill.
+
+    Use ``--tokenizer tiktoken`` for billable-accurate token counts.
     """
     import fnmatch
 
     from .brief import BriefGenerator
     from .index import VaultIndex
-    from .tokens import estimate_tokens
+    from .tokens import estimate_tokens as _chars4_estimate
 
     v = _resolve_vault(vault)
+
+    # Pick the tokenizer once.
+    if tokenizer == "tiktoken":
+        try:
+            import tiktoken  # type: ignore
+        except ImportError as e:
+            raise click.ClickException(
+                "tiktoken not installed. Run: pip install tiktoken"
+            ) from e
+        try:
+            enc = tiktoken.get_encoding(encoding)
+        except Exception as e:  # noqa: BLE001
+            raise click.ClickException(
+                f"Unknown tiktoken encoding {encoding!r}: {e}"
+            )
+        def count(text: str) -> int:
+            return len(enc.encode(text))
+    else:
+        def count(text: str) -> int:
+            return _chars4_estimate(text)
 
     # Find the files that count as "the load."
     branch_root = v.root / branch
@@ -368,6 +407,10 @@ def diff(
     files: list[Path] = []
     for note in v.walk():
         if note.branch != branch:
+            continue
+        # Never count brief.md as part of the "before" load — it's the
+        # thing we're comparing against.
+        if note.path.name == "brief.md":
             continue
         if include:
             rel = note.relpath
@@ -384,13 +427,30 @@ def diff(
     for f in files:
         text = f.read_text(encoding="utf-8", errors="replace")
         before_bytes += len(text.encode("utf-8"))
-        before_tokens += estimate_tokens(text)
+        before_tokens += count(text)
 
-    # "After" cost: the brief at the given budget.
-    with VaultIndex(v) as ix:
-        gen = BriefGenerator(v, ix, budget_tokens=budget)
-        b = gen.for_branch(branch)
-    after_tokens = b.stats.tokens
+    # "After" cost: either the on-disk brief.md OR a fresh regeneration.
+    brief_path = v.root / branch / "brief.md"
+    brief_stats = None
+    after_label = ""
+
+    if regenerate:
+        with VaultIndex(v) as ix:
+            gen = BriefGenerator(v, ix, budget_tokens=budget)
+            b = gen.for_branch(branch)
+        # Count the fresh content with whichever tokenizer was selected.
+        after_tokens = count(b.content)
+        brief_stats = b.stats
+        after_label = f"brief @ {budget} (regenerated, in-memory)"
+    elif brief_path.is_file():
+        text = brief_path.read_text(encoding="utf-8", errors="replace")
+        after_tokens = count(text)
+        after_label = f"brief.md (on disk, {brief_path.stat().st_size} bytes)"
+    else:
+        raise click.ClickException(
+            f"No brief.md at {brief_path}. Run `ws brief {branch} --write` "
+            f"first, or pass --regenerate to build one in-memory."
+        )
 
     ratio = (before_tokens / after_tokens) if after_tokens else 0.0
     saved_pct = 100.0 * (1.0 - after_tokens / before_tokens) if before_tokens else 0.0
@@ -398,27 +458,35 @@ def diff(
     payload = {
         "branch": branch,
         "files_counted": len(files),
+        "tokenizer": tokenizer if tokenizer == "chars4" else f"tiktoken:{encoding}",
+        "regenerated": regenerate,
         "before_tokens": before_tokens,
         "before_kb": before_bytes // 1024,
         "after_tokens": after_tokens,
+        "after_label": after_label,
         "ratio": round(ratio, 1),
         "saved_pct": round(saved_pct, 1),
-        "brief_action_items": b.stats.action_items_kept,
-        "brief_decisions": b.stats.decisions_kept,
-        "brief_headings": b.stats.headings_kept,
     }
+    if brief_stats is not None:
+        payload["brief_action_items"] = brief_stats.action_items_kept
+        payload["brief_decisions"] = brief_stats.decisions_kept
+        payload["brief_headings"] = brief_stats.headings_kept
+
     if json_out:
         click.echo(json.dumps(payload, indent=2))
         return
 
+    tok_label = "chars/4 estimator" if tokenizer == "chars4" else f"tiktoken {encoding}"
     click.echo(f"Branch: {branch}")
+    click.echo(f"Tokenizer: {tok_label}")
     click.echo(f"Files counted: {len(files)} ({before_bytes // 1024} KB)\n")
     click.echo(f"Before (load all files): {before_tokens:>9,} tokens")
-    click.echo(f"After  (brief @ {budget:>4}): {after_tokens:>9,} tokens")
-    click.echo(f"Ratio: {ratio:.1f}x reduction ({saved_pct:.1f}% saved)\n")
-    click.echo(f"Brief contents: {b.stats.action_items_kept} actions · "
-               f"{b.stats.decisions_kept} decisions · "
-               f"{b.stats.headings_kept} headings")
+    click.echo(f"After ({after_label}): {after_tokens:>9,} tokens")
+    click.echo(f"Ratio: {ratio:.1f}x reduction ({saved_pct:.1f}% saved)")
+    if brief_stats is not None:
+        click.echo(f"\nBrief contents: {brief_stats.action_items_kept} actions · "
+                   f"{brief_stats.decisions_kept} decisions · "
+                   f"{brief_stats.headings_kept} headings")
 
 
 if __name__ == "__main__":

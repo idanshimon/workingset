@@ -56,19 +56,28 @@ The published `ws diff` ratio is stable under this approximation — both "befor
 
 ## Verified on a real vault
 
-On `customer-hub` (the workflow that motivated this project — 1,233 notes, 2.04M tokens, 52 branches), measured on the canonical 5-file `load <customer>` pattern for HCA:
+Measured end-to-end on `customer-hub` (1,233 notes, 52 branches, 2.04M tokens of source markdown), using **the actual `brief.md` written to disk** and **real OpenAI `o200k_base` tokenization** — i.e. what an agent will actually load and what an LLM will actually bill for.
 
 ```
-ws diff cust/hca --budget 8000 --include "cust/hca/context/*.md"
-  Files counted: 112 (1212 KB)
-  Before (load all files):  302,641 tokens
-  After  (brief @ 8000):      4,178 tokens
-  Ratio: 72.4x reduction (98.6% saved)
-  Brief contents: 25 actions · 12 decisions · 50 headings
-                  + verbatim ## STATUS block from the most recent note
+ws diff cust/hca --tokenizer tiktoken \
+                 --include "cust/hca/context/index.md" \
+                 --include "cust/hca/context/personas.md" \
+                 --include "cust/hca/context/architecture.md" \
+                 --include "cust/hca/context/opp-history.md" \
+                 --include "cust/hca/context/open-items.md"
+
+  Tokenizer: tiktoken o200k_base
+  Files counted: 5 (208 KB)
+  Before (load all files):     57,141 tokens
+  After  (brief.md on disk):    1,681 tokens
+  Ratio: 34.0x reduction (97.1% saved)
 ```
 
-The 8K-default brief is sized so an agent can walk into a meeting cold, work from the brief, and not need to re-read source files just to get oriented. That's the design point — a smaller brief saves more tokens but forces re-reads. Pick `--budget 4000` for orient-only, `--budget 12000` for big multi-stream customers like HCA.
+Same measurement with the dependency-free `chars/4` estimator gives `52,403 → 1,403 = 37.4×` — about 10% optimistic vs the real tokenizer. **Always quote the tiktoken number for external claims.**
+
+Earlier drafts of this README quoted higher ratios (72×, 114×). Those were artifacts of the original `ws diff` regenerating the brief in-memory at a budget different from what's on disk; that bug is fixed in the current `--on-disk` default. The actual win is **34× by real tokenizer** on the canonical 5-file load — still substantial, just honest.
+
+The 8K-default brief is sized so an agent can walk into a meeting cold, work from the brief, and not need to re-read source files just to get oriented. Pick `--budget 4000` for orient-only, `--budget 12000` for big multi-stream customers like HCA.
 
 ## Architecture
 
