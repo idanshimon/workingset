@@ -15,6 +15,13 @@ This project follows [Semantic Versioning](https://semver.org/).
   - `cron-refresh.sh` — cron / launchd refresh script template
 - README now links to AGENTS.md as the agent-installer entrypoint
 
+### Planned (TBD)
+
+- **End-to-end verification of the AGENTS.md install flow** in a fresh Hermes / Claude Code / Codex session — drive the 8-step workflow autonomously against the example vault, capture any gaps in the deterministic-step wording, and patch AGENTS.md based on what the agent actually trips on.
+- README screenshots — picture of a real brief + the multi-run dashboard, embedded near the top so README skimmers see the deliverable.
+- Bench harness bundled with the tool — currently the 432-trial benchmark lives in a separate location; shipping it under `bench/` with the anonymized fixture would make the safety claim independently reproducible by anyone who clones the repo.
+- Type hints + `mypy --strict` in CI — declarative types exist informally; making them enforced would catch a class of bugs the regex pitfall (Sonnet token parsing) belonged to.
+
 ## [0.3.0] — 2026-06-16
 
 ### Added
