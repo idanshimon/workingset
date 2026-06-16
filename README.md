@@ -1,5 +1,9 @@
 # workingset
 
+[![tests](https://github.com/idanshimon/workingset/actions/workflows/test.yml/badge.svg)](https://github.com/idanshimon/workingset/actions/workflows/test.yml)
+[![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/workingset/)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 > Vault-aware context compactor for LLM agents. Treat your markdown vault like a working set, not a buffer.
 
 Point `workingset` at any folder of markdown — Obsidian vault, customer-notes repo, agent-os tree, anything — and get four primitives that solve the real-world version of the "context window blew up" problem:
@@ -22,7 +26,7 @@ The architecture is a direct application of [Derek Thomas's ContextForge paper](
 ## Install
 
 ```bash
-pip install workingset
+pip install git+https://github.com/idanshimon/workingset
 # or, with optional LLM summarizers:
 pip install "workingset[llm]"
 ```
@@ -143,6 +147,15 @@ All commands accept `--vault PATH` (defaults to current directory) and `--json` 
 - **Not an Obsidian plugin.** It reads the filesystem directly. Works alongside Obsidian, doesn't require it.
 - **Not a model harness.** It produces context, doesn't call models. Plug the output into [Hermes](https://hermes-agent.nousresearch.com) / Claude Code / Copilot CLI / Microsoft Scout / your own agent.
 - **Not a replacement for ContextForge.** ContextForge operates on the model's KV cache and unlocks "infinite context" for agents that own the model deployment. `workingset` operates on the markdown layer and unlocks "5K-token loads" for agents that don't. They compose.
+
+## Documentation
+
+- **[`docs/architecture.md`](docs/architecture.md)** — the 5-layer ContextForge-derived mental model, section budgets, library API
+- **[`docs/cli-reference.md`](docs/cli-reference.md)** — every CLI command + every flag, with examples
+- **[`docs/adoption-guide.md`](docs/adoption-guide.md)** — step-by-step recipe for wiring workingset into a new vault
+- **[`examples/example-vault/`](examples/example-vault)** — canonical fixture vault you can `ws init` against to see a real brief
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — dev setup, PR conventions
+- **[`CHANGELOG.md`](CHANGELOG.md)** — version history
 
 ## Credit
 

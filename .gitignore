@@ -7,4 +7,19 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
+
+# Test + coverage artifacts
+.coverage
+.pytest_cache/
+htmlcov/
+coverage.xml
+*.cover
+
+# workingset build artifact (the SQLite FTS5 index)
+.workingset/
+
+# IDE
+.vscode/
+.idea/
+*.swp
