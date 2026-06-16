@@ -37,9 +37,12 @@ ws init                         # one-time index build
 ws stats                        # confirm: notes / branches / tokens / db size
 ws query "kapil 30x token"      # BM25 search, prints top hits + snippets
 ws query "kapil" --branch cust/hca --budget 4000     # scoped working set
-ws brief cust/hca --write       # writes cust/hca/brief.md (~500 tok)
+ws brief cust/hca --write       # writes cust/hca/brief.md (~8000 tok default)
 ws compact cust/hca/index.md    # archive stale STATUS blocks
+ws diff cust/hca --include "cust/hca/context/*.md"   # measure reduction
 ```
+
+The default brief budget is **8,000 tokens** — sized so an agent can walk into a meeting cold and *work* from the brief, not just orient itself. Bump to `--budget 12000` for big multi-stream customers, `--budget 4000` if all you need is "what's the state of play."
 
 Every command takes `--json` for scripting from any agent harness.
 
@@ -53,23 +56,19 @@ The published `ws diff` ratio is stable under this approximation — both "befor
 
 ## Verified on a real vault
 
-On `customer-hub` (the workflow that motivated this project — 1,233 notes, 2.04M tokens, 52 branches):
+On `customer-hub` (the workflow that motivated this project — 1,233 notes, 2.04M tokens, 52 branches), measured on the canonical 5-file `load <customer>` pattern for HCA:
 
 ```
-ws diff cust/hca --budget 500
-  Files counted: 5 (214 KB)
-  Before (load all files):  53,942 tokens
-  After  (brief @  500):       472 tokens
-  Ratio: 114.3x reduction (99.1% saved)
-
-ws diff cust/hca --budget 1500
-  Before (load all files):  53,942 tokens
-  After  (brief @ 1500):     1,275 tokens
-  Ratio: 42.3x reduction (97.6% saved)
-  Brief contents: 8 actions · 5 decisions · 15 headings
+ws diff cust/hca --budget 8000 --include "cust/hca/context/*.md"
+  Files counted: 112 (1212 KB)
+  Before (load all files):  302,641 tokens
+  After  (brief @ 8000):      4,178 tokens
+  Ratio: 72.4x reduction (98.6% saved)
+  Brief contents: 25 actions · 12 decisions · 50 headings
+                  + verbatim ## STATUS block from the most recent note
 ```
 
-The 1500-budget brief is the one you'd actually wire into a skill — full enough to act on, still 42× cheaper than the file dump it replaces.
+The 8K-default brief is sized so an agent can walk into a meeting cold, work from the brief, and not need to re-read source files just to get oriented. That's the design point — a smaller brief saves more tokens but forces re-reads. Pick `--budget 4000` for orient-only, `--budget 12000` for big multi-stream customers like HCA.
 
 ## Architecture
 

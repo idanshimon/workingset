@@ -304,16 +304,160 @@ def test_per_section_budget_keeps_recent_titles(tmp_path: Path):
 
 def test_section_budget_allocation():
     sb = SectionBudget()
-    alloc = sb.allocate(1000)
-    # Sum of allocations should be roughly the input (we have a small
-    # overhead reservation).
+    alloc = sb.allocate(10_000)
+    # Allocations should leave room for the 5% overhead bucket.
     total = sum(alloc.values())
-    assert 800 <= total <= 1000
+    assert 9_000 <= total <= 10_500  # status+actions+decisions+headings+recent
     # No section gets less than its floor.
-    assert alloc["actions"] >= 60
-    assert alloc["decisions"] >= 40
-    assert alloc["headings"] >= 50
-    assert alloc["recent"] >= 40
+    assert alloc["actions"] >= 200
+    assert alloc["status"] >= 300
+    assert alloc["decisions"] >= 100
+    assert alloc["headings"] >= 100
+    assert alloc["recent"] >= 80
+    # Status section is at least as big as decisions (it's higher-priority).
+    assert alloc["status"] >= alloc["decisions"]
+
+
+def test_status_block_extracted_into_brief(tmp_path: Path):
+    """The most recent ## 🔥 STATUS block should appear verbatim in the brief.
+
+    This is the highest-signal content for customer-hub-style notes and was
+    missing from the brief in v1. Regression test.
+    """
+    from workingset.brief import _extract_latest_status
+
+    (tmp_path / "cust" / "hca").mkdir(parents=True)
+    (tmp_path / "cust" / "hca" / "index.md").write_text(
+        "# HCA\n\n"
+        "## 🔥 STATUS (June 15, 2026): KAPIL MEET DONE | SCOPE LOCKED\n\n"
+        "**Just landed:** Kapil corrected scope, two-act framing locked, "
+        "8 attendees confirmed.\n"
+        "- Workshop invite gap caught\n"
+        "- BizTalk sleeper post-workshop\n\n"
+        "## 🔥 STATUS (May 22, 2026): EARLIER\n\n"
+        "Old status content.\n\n"
+        "## Other section\n\nUnrelated.\n",
+        encoding="utf-8",
+    )
+    v = Vault(tmp_path)
+    notes = sorted(v.walk(), key=lambda n: -n.mtime_ns)
+
+    # Extractor finds the FIRST status block (notes already sorted newest-first).
+    block, src = _extract_latest_status(notes)
+    assert block is not None
+    assert "June 15, 2026" in block
+    assert "KAPIL MEET DONE" in block
+    assert "Workshop invite gap caught" in block
+    # It stops at the next status header, doesn't bleed into May 22.
+    assert "Old status content" not in block
+    assert "## Other section" not in block
+    assert src == "cust/hca/index.md"
+
+    with VaultIndex(v) as ix:
+        ix.reindex(full=True)
+        b = BriefGenerator(v, ix, budget_tokens=4000).for_branch("cust/hca")
+
+    # Status block must surface in the brief content + stats.
+    assert "## Latest status (verbatim)" in b.content
+    assert "KAPIL MEET DONE" in b.content
+    assert b.stats.status_block_included
+    assert b.stats.status_source == "cust/hca/index.md"
+
+
+def test_status_extractor_returns_none_when_absent():
+    """No STATUS blocks → no status section, no crash."""
+    from workingset.brief import _extract_latest_status
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "cust" / "x").mkdir(parents=True)
+        (root / "cust" / "x" / "n.md").write_text(
+            "# Plain note\n\n## Section\n\nNo status here.\n",
+            encoding="utf-8",
+        )
+        v = Vault(root)
+        notes = list(v.walk())
+        block, src = _extract_latest_status(notes)
+        assert block is None
+        assert src is None
+
+        with VaultIndex(v) as ix:
+            ix.reindex(full=True)
+            b = BriefGenerator(v, ix, budget_tokens=2000).for_branch("cust/x")
+        assert "## Latest status" not in b.content
+        assert b.stats.status_block_included is False
+
+
+def test_brief_does_not_read_itself(tmp_path: Path):
+    """Regression: brief.md must NOT be ingested as a source note.
+
+    First run produced a brief; second run was treating brief.md as input,
+    leading to triplicated `_[cust/x/brief.md]_` source tags and a
+    self-referential status_source. The brief generator must filter out
+    its own artifacts.
+    """
+    (tmp_path / "cust" / "z").mkdir(parents=True)
+    (tmp_path / "cust" / "z" / "index.md").write_text(
+        "# Z\n\n## 🔥 STATUS (June 1)\nReal status content.\n\n"
+        "## Plan\n- [ ] Real action item\n",
+        encoding="utf-8",
+    )
+    v = Vault(tmp_path)
+
+    # First run.
+    with VaultIndex(v) as ix:
+        ix.reindex(full=True)
+        b1 = BriefGenerator(v, ix, budget_tokens=4000).for_branch("cust/z")
+        b1.write(tmp_path / "cust" / "z" / "brief.md")
+        ix.reindex()  # pick up the new file
+
+        # Second run — should NOT see brief.md as a source.
+        b2 = BriefGenerator(v, ix, budget_tokens=4000).for_branch("cust/z")
+
+    # The status source should still point at index.md, not brief.md.
+    assert b2.stats.status_source == "cust/z/index.md", (
+        f"status_source leaked to brief artifact: {b2.stats.status_source}"
+    )
+    # No action item should reference brief.md as a source.
+    assert "_[cust/z/brief.md]_" not in b2.content, (
+        "brief.md leaked into source tags:\n" + b2.content
+    )
+    # And source_notes count should not have inflated.
+    assert b2.stats.notes_indexed == 1
+
+
+def test_status_trim_keeps_content_under_tight_budget():
+    """Regression: status trimmer used to drop everything below the header
+    when budget was tight, leaving just '## STATUS ...' + '_(trimmed)_'.
+
+    Now we hard-cut the first paragraph instead — a header without body
+    is useless.
+    """
+    from workingset.brief import _trim_block_to_budget
+
+    block = (
+        "## 🔥 STATUS (June 15): KAPIL MEET DONE | SCOPE LOCKED\n\n"
+        "**Just landed (Kapil + HCA team):**\n"
+        + ("- Workshop invite gap caught\n" * 30)
+        + "- BizTalk sleeper post-workshop\n\n"
+        "Old paragraph 1.\n\n"
+        "Old paragraph 2.\n"
+    )
+
+    # Budget too small to fit even the first paragraph in full.
+    out = _trim_block_to_budget(block, budget=80)
+    # Header is preserved.
+    assert "KAPIL MEET DONE" in out
+    # We never return JUST the header — there's some content + a marker.
+    assert "_(" in out  # one of the trimmed markers
+    # We didn't return the entire block.
+    assert len(out) < len(block)
+
+
+def test_status_trim_no_op_when_under_budget():
+    from workingset.brief import _trim_block_to_budget
+    block = "## STATUS (today)\n\nshort content.\n"
+    assert _trim_block_to_budget(block, budget=10_000) == block
 
 
 def test_trim_lines_to_budget_helper():

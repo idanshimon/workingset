@@ -204,8 +204,9 @@ def query(
 @main.command(help="Generate an L0 residual brief for a branch.")
 @click.argument("branch", required=False)
 @VAULT_OPTION
-@click.option("--budget", "-B", type=int, default=500,
-              help="Target token budget for the brief (default 500).")
+@click.option("--budget", "-B", type=int, default=8000,
+              help="Target token budget for the brief (default 8000 — "
+                   "size for an agent to actually work from, not just orient).")
 @click.option("--out", "-o", type=click.Path(path_type=Path), default=None,
               help="Output path. Default: <vault>/<branch>/brief.md "
                    "(or <vault>/.workingset/brief-<vault>.md for whole-vault).")
@@ -329,8 +330,8 @@ def compact(
 @main.command(help="Measure token cost: 'load <branch>' before vs after a brief.")
 @click.argument("branch")
 @VAULT_OPTION
-@click.option("--budget", "-B", type=int, default=500,
-              help="Brief budget to compare against (default 500).")
+@click.option("--budget", "-B", type=int, default=8000,
+              help="Brief budget to compare against (default 8000).")
 @click.option("--include", multiple=True,
               help="Glob(s) of files counted as the 'before' load. "
                    "Default: every .md file in the branch. Repeatable.")
